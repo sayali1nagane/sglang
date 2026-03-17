@@ -276,15 +276,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 RUN --mount=type=cache,target=/root/.cache/pip \
     CUDA_MAJOR="${CUDA_VERSION%%.*}" && \
     if [ "$CUDA_MAJOR" -ge 13 ]; then \
-        echo "CUDA >= 13, installing mooncake-transfer-engine from source code"; \
-        git clone --branch v${MOONCAKE_VERSION} --depth 1 https://github.com/kvcache-ai/Mooncake.git && \
-        cd Mooncake && \
-        bash dependencies.sh && \
-        mkdir -p build && \
-        cd build && \
-        cmake .. ${MOONCAKE_COMPILE_ARG} && \
-        make -j$(nproc) && \
-        make install; \
+        echo "CUDA >= 13, installing mooncake-transfer-engine-cuda13 from pip"; \
+        python3 -m pip install mooncake-transfer-engine-cuda13==${MOONCAKE_VERSION}; \
     else \
         echo "CUDA < 13, installing mooncake-transfer-engine from pip"; \
         python3 -m pip install mooncake-transfer-engine==${MOONCAKE_VERSION}; \
