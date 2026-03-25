@@ -2734,8 +2734,8 @@ class Scheduler(
             )
 
     def flush_cache_wrapped(self, recv_req: FlushCacheReqInput):
-        success = self.flush_cache()
-        return FlushCacheReqOutput(success=success)
+        success, message = self.flush_cache()
+        return FlushCacheReqOutput(success=success, message=message)
 
     def clear_hicache_storage_wrapped(self, recv_req: ClearHiCacheReqInput):
         if self.enable_hierarchical_cache:
@@ -2936,15 +2936,43 @@ class Scheduler(
             # TODO: allow optional empty cache
             torch.cuda.empty_cache()
             logger.info("Cache flushed successfully!")
-            success = True
+            return True, "Cache flushed successfully"
         else:
+            message = self._get_not_idle_reason()
             logging.warning(
-                f"Cache not flushed because there are pending requests. "
-                f"#queue-req: {len(self.waiting_queue)}, "
-                f"#running-req: {len(self.running_batch.reqs)}"
+                f"Cache not flushed because scheduler is not idle: {message}"
             )
-            success = False
-        return success
+            return False, message
+
+    def _get_not_idle_reason(self) -> str:
+        """Collect reasons why the scheduler is not idle."""
+        blockers = []
+        if not self.running_batch.is_empty():
+            blockers.append(f"running_reqs={len(self.running_batch.reqs)}")
+        if self.chunked_req is not None:
+            blockers.append("chunked_req active")
+        if len(self.waiting_queue) > 0:
+            blockers.append(f"waiting_queue={len(self.waiting_queue)}")
+        if self.cur_batch is not None and not self.cur_batch.is_empty():
+            blockers.append(f"cur_batch={len(self.cur_batch.reqs)}")
+        if self.last_batch is not None and not self.last_batch.is_empty():
+            blockers.append(f"last_batch={len(self.last_batch.reqs)}")
+        if len(self.grammar_manager.grammar_queue) > 0:
+            blockers.append(f"grammar_queue={len(self.grammar_manager.grammar_queue)}")
+        if self.enable_hierarchical_cache:
+            tc = self.tree_cache
+            if len(tc.ongoing_write_through) > 0:
+                blockers.append(
+                    f"hicache_write_through={len(tc.ongoing_write_through)}"
+                )
+            if len(tc.ongoing_load_back) > 0:
+                blockers.append(f"hicache_load_back={len(tc.ongoing_load_back)}")
+            if tc.enable_storage:
+                if len(tc.ongoing_prefetch) > 0:
+                    blockers.append(f"hicache_prefetch={len(tc.ongoing_prefetch)}")
+                if len(tc.ongoing_backup) > 0:
+                    blockers.append(f"hicache_backup={len(tc.ongoing_backup)}")
+        return ", ".join(blockers) if blockers else "unknown"
 
     def get_internal_state(self, recv_req: GetInternalStateReq):
         ret = vars(get_global_server_args())

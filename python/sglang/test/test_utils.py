@@ -182,14 +182,29 @@ def flush_cache_with_retry(
     CI environments.
     """
     deadline = time.time() + timeout
+    attempts = 0
     while time.time() < deadline:
+        attempts += 1
+        remaining = deadline - time.time()
         try:
             response = requests.post(f"{base_url}/flush_cache", timeout=10)
             if response.status_code == 200:
+                if attempts > 1:
+                    print(f"flush_cache succeeded after {attempts} attempts")
                 return True
-        except requests.RequestException:
-            pass
+            if attempts == 1 or attempts % 10 == 0:
+                print(
+                    f"flush_cache attempt {attempts}: "
+                    f"{response.text.strip()}, remaining={remaining:.1f}s"
+                )
+        except requests.RequestException as e:
+            if attempts == 1 or attempts % 10 == 0:
+                print(
+                    f"flush_cache attempt {attempts}: "
+                    f"{type(e).__name__}, remaining={remaining:.1f}s"
+                )
         time.sleep(poll_interval)
+    print(f"flush_cache timed out after {attempts} attempts ({timeout}s)")
     return False
 
 
