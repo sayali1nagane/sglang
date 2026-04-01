@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-03-31T12:14:18.953803Z",
+  "generatedAt": "2026-04-01T00:15:04.561747Z",
   "sourceRepo": "https://github.com/lm-sys/lm-sys.github.io/tree/main/blog",
   "keywords": [
     "sglang",
@@ -10,9 +10,16 @@
     "sglang diffusion"
   ],
   "maxCards": 6,
-  "totalBlogFilesScanned": 79,
+  "totalBlogFilesScanned": 80,
   "cardsPublished": 6,
   "posts": [
+    {
+      "slug": "2026-03-25-gtc2026",
+      "title": "Highlights of SGLang at NVIDIA GTC 2026",
+      "url": "https://lmsys.org/blog/2026-03-25-gtc2026/",
+      "image": "https://lmsys.org/images/blog/gtc2026/happyhour-crowd.jpg",
+      "date": "March 31, 2026"
+    },
     {
       "slug": "2026-03-25-eep-partial-failure-tolerance",
       "title": "Elastic EP in SGLang: Achieving Partial Failure Tolerance for DeepSeek MoE Deployments",
@@ -47,13 +54,6 @@
       "url": "https://lmsys.org/blog/2026-02-19-gb300-longctx/",
       "image": "https://lmsys.org/images/blog/gb300_longctx/cover.png",
       "date": "February 19, 2026"
-    },
-    {
-      "slug": "2026-02-16-sglang-diffusion-advanced-optimizations",
-      "title": "SGLang-Diffusion: Advanced Optimizations for Production-Ready Video Generation",
-      "url": "https://lmsys.org/blog/2026-02-16-sglang-diffusion-advanced-optimizations/",
-      "image": "https://lmsys.org/images/blog/sgl-diffusion/sgl-diffusion-banner-16-9.png",
-      "date": "February 16, 2026"
     }
   ]
 }
