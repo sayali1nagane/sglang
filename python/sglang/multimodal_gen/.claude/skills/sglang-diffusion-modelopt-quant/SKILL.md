@@ -23,7 +23,7 @@ This skill owns the ModelOpt-to-SGLang bridge. It is not a generic kernel-tuning
 - Benchmark only when BF16 and quantized commands are identical except for the checkpoint override being tested.
 - For diffusion FP8, pin `dit_cpu_offload=false` and `dit_layerwise_offload=false`.
 - For multi-transformer pipelines, use per-component overrides when different components need different checkpoints.
-- When a branch is missing the validated helper tools, refresh `python/sglang/multimodal_gen/tools/convert_modelopt_fp8_checkpoint.py` and `python/sglang/multimodal_gen/tools/compare_diffusion_trajectory_similarity.py` instead of inventing one-off scripts elsewhere.
+- When a branch is missing the validated helper tools, refresh `python/sglang/multimodal_gen/tools/convert_modelopt_fp8_checkpoint.py`, `python/sglang/multimodal_gen/tools/convert_hf_to_fp8.py`, `python/sglang/multimodal_gen/tools/build_modelopt_nvfp4_mixed_transformer.py`, and `python/sglang/multimodal_gen/tools/compare_diffusion_trajectory_similarity.py` instead of inventing one-off scripts elsewhere.
 - After validating a new ModelOpt quant path, update both the FP8 and NVFP4 support tables in this skill before closing the task.
 
 ## Read First
@@ -39,6 +39,8 @@ Read these sources before changing code:
   - `python/sglang/multimodal_gen/runtime/loader/transformer_load_utils.py`
 - Helper tools in this repo:
   - [`python/sglang/multimodal_gen/tools/convert_modelopt_fp8_checkpoint.py`](../../../tools/convert_modelopt_fp8_checkpoint.py)
+  - [`python/sglang/multimodal_gen/tools/convert_hf_to_fp8.py`](../../../tools/convert_hf_to_fp8.py)
+  - [`python/sglang/multimodal_gen/tools/build_modelopt_nvfp4_mixed_transformer.py`](../../../tools/build_modelopt_nvfp4_mixed_transformer.py)
   - [`python/sglang/multimodal_gen/tools/compare_diffusion_trajectory_similarity.py`](../../../tools/compare_diffusion_trajectory_similarity.py)
 
 If you are working on a new model family, inspect the transformer's config and tensor naming before changing the generic converter.
@@ -76,6 +78,7 @@ This repo now contains:
 
 | Base Model | Validated Scope | HF DiT Weights | Notes |
 | --- | --- | --- | --- |
+| `black-forest-labs/FLUX.1-dev` | mixed BF16+NVFP4 transformer override, correctness validation, 4x RTX 5090 benchmark, torch-profiler trace | `unpublished` | use `build_modelopt_nvfp4_mixed_transformer.py`; validated builder keeps selected FLUX.1 modules in BF16 and sets `swap_weight_nibbles=false` |
 | `black-forest-labs/FLUX.2-dev` | packed-QKV load path | `black-forest-labs/FLUX.2-dev-NVFP4` | validated packed export detection and runtime layout handling |
 
 ## FP8 Vs NVFP4
@@ -99,6 +102,22 @@ Important caveat:
 - "often" does not mean "always"
 - the exact load path still depends on the checkpoint family, especially whether a model uses a packed-QKV layout
 
+## FLUX.1-dev NVFP4 Bring-Up Notes
+
+The validated FLUX.1-dev SGLang-side NVFP4 path used all of the following:
+
+- keep `torch.compile` disabled for smoke, correctness, benchmark, and profiler runs when the task requires it
+- load the mixed checkpoint with `--transformer-path <mixed-transformer-dir>`, not `--transformer-weights-path`
+- prefer `--prompt-path <file>` when pairing a fixed prompt with `--output-file-name`
+- if the base FLUX repo is already cached locally and the machine has unreliable HF access, point `--model-path` at the local snapshot and set `HF_HUB_OFFLINE=1`
+
+For this FLUX.1-dev export family, two concrete pitfalls were validated:
+
+- the diffusers NVFP4 export already matched the runtime kernel byte layout, so `swap_weight_nibbles` must be `false`
+- `FluxAttention` and `FluxSingleTransformerBlock` must propagate full prefixes to their child linears, or the FLUX.1 BF16 fallback patterns do not match the intended modules
+
+Without those prefixes, the mixed checkpoint can fail with shape mismatches such as BF16 `(12288, 3072)` tensors being loaded into NVFP4 `(12288, 1536)` parameters.
+
 ## Generic Workflow
 
 ### 1. Verify The BF16 Baseline First
@@ -120,7 +139,7 @@ python quantize.py \
   --model <model-name> \
   --override-model-path <hf-repo-or-local-model> \
   --model-dtype <Half|BFloat16> \
-  --format <fp8|nvfp4> \
+  --format <fp8|fp4> \
   --batch-size 1 \
   --calib-size <calib-size> \
   --n-steps <calib-steps> \
@@ -129,6 +148,9 @@ python quantize.py \
   --quantized-torch-ckpt-save-path <out>/ckpt \
   --hf-ckpt-dir <out>/hf
 ```
+
+For current ModelOpt diffusion examples, use `--format fp4` for NVFP4 exports.
+Do not assume the checked-out ModelOpt version accepts a literal `nvfp4` format string unless you verified it locally.
 
 For multi-transformer models:
 
@@ -166,8 +188,24 @@ For `FLUX.1-dev`, the validated fallback set currently keeps these modules in BF
 - `transformer_blocks.*.ff_context.net.0.proj`
 - `transformer_blocks.*.ff_context.net.2`
 - `single_transformer_blocks.*.norm.linear`
+- `single_transformer_blocks.*.proj_mlp`
 
 Use `--model-type flux1` to force that profile, or rely on `--model-type auto` when the export config identifies `FluxTransformer2DModel`.
+
+For FLUX.1-dev NVFP4 model families that need a mixed BF16+NVFP4 checkpoint, build the merged transformer explicitly:
+
+```bash
+PYTHONPATH=python python3 -m sglang.multimodal_gen.tools.build_modelopt_nvfp4_mixed_transformer \
+  --base-transformer-dir <base-model-transformer-dir> \
+  --modelopt-hf-dir <out>/hf/transformer \
+  --output-dir <out>/transformer-mixed \
+  --pattern-preset flux1-nvfp4
+```
+
+The validated FLUX.1-dev mixed builder also needs to preserve:
+
+- `quant_type: NVFP4` in `config.json`
+- `swap_weight_nibbles: false` for the validated diffusers export
 
 ### 4. Load The Quantized Checkpoint In SGLang
 
