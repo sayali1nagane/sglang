@@ -9,7 +9,9 @@ from sglang.multimodal_gen.runtime.layers.quantization.modelopt_quant import (
 from sglang.multimodal_gen.runtime.loader.transformer_load_utils import (
     _ModelOptFp8OffloadAdapter,
 )
-from sglang.multimodal_gen.runtime.utils import layerwise_offload as layerwise_offload_mod
+from sglang.multimodal_gen.runtime.utils import (
+    layerwise_offload as layerwise_offload_mod,
+)
 from sglang.multimodal_gen.runtime.utils.layerwise_offload import (
     LayerwiseOffloadManager,
 )
@@ -64,7 +66,9 @@ class _DummyModel(torch.nn.Module):
 
 
 def test_layerwise_offload_preserves_non_contiguous_stride(monkeypatch):
-    monkeypatch.setattr(layerwise_offload_mod.torch, "get_device_module", lambda: _FakeDeviceModule)
+    monkeypatch.setattr(
+        layerwise_offload_mod.torch, "get_device_module", lambda: _FakeDeviceModule
+    )
     monkeypatch.setattr(layerwise_offload_mod.current_platform, "device_type", "cpu")
 
     model = _DummyModel()
@@ -116,13 +120,17 @@ def test_modelopt_fp8_adapter_keeps_layerwise_offload_enabled():
 
 
 def test_layerwise_offload_aligns_contiguous_tensor_offsets(monkeypatch):
-    monkeypatch.setattr(layerwise_offload_mod.torch, "get_device_module", lambda: _FakeDeviceModule)
+    monkeypatch.setattr(
+        layerwise_offload_mod.torch, "get_device_module", lambda: _FakeDeviceModule
+    )
     monkeypatch.setattr(layerwise_offload_mod.current_platform, "device_type", "cpu")
 
     class _AlignedDummyBlock(torch.nn.Module):
         def __init__(self) -> None:
             super().__init__()
-            self.weight = torch.nn.Parameter(torch.arange(9, dtype=torch.float32).reshape(3, 3))
+            self.weight = torch.nn.Parameter(
+                torch.arange(9, dtype=torch.float32).reshape(3, 3)
+            )
             self.bias = torch.nn.Parameter(torch.arange(3, dtype=torch.float32))
 
     class _AlignedDummyModel(torch.nn.Module):
