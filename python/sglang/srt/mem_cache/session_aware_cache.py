@@ -462,9 +462,15 @@ class SessionAwareCache(BasePrefixCache):
         A slot's pool_idx being in active_pool_idxs indicates a req owns it.
         """
         total = 0
-        for slot in self.slots.values():
+        for sid, slot in self.slots.items():
             in_batch = (
                 active_pool_idxs is not None and slot.req_pool_idx in active_pool_idxs
+            )
+            logger.warning(
+                f"[DBG slot_held] sid={sid[:8]} is_holding_kv={slot.is_holding_kv} "
+                f"in_batch={in_batch} alloc={slot.kv_allocated_len} "
+                f"committed={slot.kv_committed_len} protected={slot.cache_protected_len} "
+                f"pool_idx={slot.req_pool_idx} active={active_pool_idxs}"
             )
             if slot.is_holding_kv and not in_batch:
                 allocated = ceil_align(slot.kv_allocated_len, self.page_size)
