@@ -203,13 +203,25 @@ class SessionAwareCache(BasePrefixCache):
 
         slot.restore_to_req(req)
 
-        # logprob_start_len is already forced to -1 for streaming sessions
-        # (in Req.init_next_round_input), so the prefix key is not truncated
-        # and we can directly reuse the committed KV length.
-        prefix_len = min(req.kv_committed_len, max(len(params.key.token_ids) - 1, 0))
+        # init_next_round_input passes token_ids = fill_ids[:input_len-1],
+        # reserving 1 token for prefill so the forward pass can produce
+        # logits to sample the next token. We use token_ids length directly
+        # (no additional -1) — the reservation has already been applied.
+        prefix_len = min(req.kv_committed_len, len(params.key.token_ids))
         logger.info(
             f"[DBG match_prefix] rid={req.rid[:8]} slot_committed={slot.kv_committed_len} slot_alloc={slot.kv_allocated_len} slot_protected={slot.cache_protected_len} token_ids_len={len(params.key.token_ids)} prefix_len={prefix_len} is_retracted={req.is_retracted}"
         )
+
+        # alloc_for_extend will write new KV indices into req_to_token[prefix_len:kv_allocated_len],
+        # orphaning slot's tail indices. Free them here so accounting stays balanced.
+        if prefix_len < req.kv_allocated_len:
+            tail_indices = self.req_to_token_pool.req_to_token[
+                req.req_pool_idx, prefix_len : req.kv_allocated_len
+            ]
+            self.token_to_kv_pool_allocator.free(tail_indices)
+            req.kv_allocated_len = prefix_len
+            req.kv_committed_len = min(req.kv_committed_len, prefix_len)
+
         device_indices = self.req_to_token_pool.req_to_token[
             req.req_pool_idx, :prefix_len
         ].to(dtype=torch.int64)
