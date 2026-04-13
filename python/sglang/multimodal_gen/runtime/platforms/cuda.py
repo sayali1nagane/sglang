@@ -144,7 +144,9 @@ class CudaPlatformBase(Platform):
         # TODO: Remove this explicit FlashInfer preference once the sm100 CUTLASS
         # LargeM dispatch grows a validated fallback for Blackwell NVFP4 shapes
         # such as Wan2.2's large-M attention projections.
-        prefer_flashinfer = envs.SGLANG_DIFFUSION_FLASHINFER_FP4_GEMM_BACKEND is not None
+        prefer_flashinfer = (
+            envs.SGLANG_DIFFUSION_FLASHINFER_FP4_GEMM_BACKEND is not None
+        )
 
         if prefer_flashinfer:
             try:
