@@ -216,6 +216,10 @@ class SessionAwareCache(BasePrefixCache):
         # logits to sample the next token. We use token_ids length directly
         # (no additional -1) — the reservation has already been applied.
         prefix_len = min(req.kv_committed_len, len(params.key.token_ids))
+        # Floor-align to page_size. cache_protected_len must be page-aligned
+        # (tree node boundary); if prefix_len isn't, accounting asserts fire.
+        if self.page_size > 1:
+            prefix_len = (prefix_len // self.page_size) * self.page_size
 
         # alloc_for_extend will write new KV indices into req_to_token[prefix_len:seq_len],
         # orphaning slot's tail indices in [prefix_len, slot.kv_allocated_len).
