@@ -212,20 +212,22 @@ class SessionAwareCache(BasePrefixCache):
             f"[DBG match_prefix] rid={req.rid[:8]} slot_committed={slot.kv_committed_len} slot_alloc={slot.kv_allocated_len} slot_protected={slot.cache_protected_len} token_ids_len={len(params.key.token_ids)} prefix_len={prefix_len} is_retracted={req.is_retracted}"
         )
 
-        # alloc_for_extend will write new KV indices into req_to_token[prefix_len:kv_allocated_len],
-        # orphaning slot's tail indices. Free them here so accounting stays balanced.
-        # Update slot state too — if the req gets rejected and restore_to_req is
-        # called again, slot.kv_allocated_len must reflect the freed tail to avoid
-        # a double free.
-        if prefix_len < slot.kv_allocated_len:
+        # alloc_for_extend will write new KV indices into req_to_token[prefix_len:seq_len],
+        # orphaning slot's tail indices in [prefix_len, slot.kv_allocated_len).
+        # Free that orphaned range, but never below cache_protected_len — those
+        # tokens are owned by the tree (locked), and freeing them would corrupt
+        # the tree's KV. The shrink path in cache_finished_req handles the case
+        # where the request is genuinely shorter than the protected prefix.
+        free_start = max(prefix_len, slot.cache_protected_len)
+        if free_start < slot.kv_allocated_len:
             tail_indices = self.req_to_token_pool.req_to_token[
-                slot.req_pool_idx, prefix_len : slot.kv_allocated_len
+                slot.req_pool_idx, free_start : slot.kv_allocated_len
             ]
             self.token_to_kv_pool_allocator.free(tail_indices)
-            slot.kv_allocated_len = prefix_len
-            slot.kv_committed_len = min(slot.kv_committed_len, prefix_len)
-            req.kv_allocated_len = prefix_len
-            req.kv_committed_len = min(req.kv_committed_len, prefix_len)
+            slot.kv_allocated_len = free_start
+            slot.kv_committed_len = min(slot.kv_committed_len, free_start)
+            req.kv_allocated_len = free_start
+            req.kv_committed_len = min(req.kv_committed_len, free_start)
 
         device_indices = self.req_to_token_pool.req_to_token[
             req.req_pool_idx, :prefix_len
