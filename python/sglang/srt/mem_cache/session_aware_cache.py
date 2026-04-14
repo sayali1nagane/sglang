@@ -234,37 +234,25 @@ class SessionAwareCache(BasePrefixCache):
         slot = self.slots.get(session_id)
         is_first = slot is None
 
-        # Aborted request handling depends on whether restore_to_req ran:
-        # - P1 skipped restore → req has a transient pool slot → free it
-        # - Mid-processing abort → req has the session slot → save it back
+        # Abort = nuke all KV resources, delete slot. Token IDs stay in
+        # req_nodes (finish_req was never called → last successful req).
+        # Next request re-prefills from scratch.
         if isinstance(req.finished_reason, FINISH_ABORT):
-            is_transient = slot is None or req.req_pool_idx != slot.req_pool_idx
-            if is_transient:
-                # Transient slot: free and don't create/touch session slot.
-                if req.req_pool_idx is not None:
-                    end = req.kv_allocated_len
-                    if end > 0:
-                        kv_indices = self.req_to_token_pool.req_to_token[
-                            req.req_pool_idx, :end
-                        ]
-                    self.token_to_kv_pool_allocator.free(kv_indices)
-                    self.req_to_token_pool.free_slots.append(req.req_pool_idx)
-                    req.req_pool_idx = None
-            else:
-                # Mid-processing abort: free tokens allocated during this
-                # turn (beyond slot's pre-abort state), keep slot's KV.
-                # Ceil-align start to page boundary so the paged allocator
-                # doesn't free a partial page containing slot's data.
-                free_start = slot.kv_allocated_len
-                if self.page_size > 1:
-                    free_start = ceil_align(free_start, self.page_size)
-                if free_start < req.kv_allocated_len:
-                    tail = self.req_to_token_pool.req_to_token[
-                        req.req_pool_idx,
-                        free_start : req.kv_allocated_len,
+            slot_pool_idx = slot.req_pool_idx if slot is not None else None
+            if slot is not None:
+                # Extend slot to cover req's decode tokens, then release all.
+                slot.kv_allocated_len = max(slot.kv_allocated_len, req.kv_allocated_len)
+                self.release_session(session_id)
+            # Free transient pool slot if req has a different one from slot.
+            if req.req_pool_idx is not None and req.req_pool_idx != slot_pool_idx:
+                end = req.kv_allocated_len
+                if end > 0:
+                    kv_indices = self.req_to_token_pool.req_to_token[
+                        req.req_pool_idx, :end
                     ]
-                    self.token_to_kv_pool_allocator.free(tail)
-                req.req_pool_idx = None
+                    self.token_to_kv_pool_allocator.free(kv_indices)
+                self.req_to_token_pool.free_slots.append(req.req_pool_idx)
+            req.req_pool_idx = None
             req.session.abort_req()
             self._mark_kv_freed(req)
             return

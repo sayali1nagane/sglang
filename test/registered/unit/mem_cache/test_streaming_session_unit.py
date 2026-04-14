@@ -190,30 +190,16 @@ def test_aborted_streaming_turn_preserves_slot_and_accounting(monkeypatch):
 
     release_kv_cache(req, tree_cache)
 
-    slot = tree_cache.slots["session-a"]
-    assert slot.req_pool_idx == 0
-    assert slot.kv_committed_len == 48
-    assert slot.kv_allocated_len == 48
+    # Abort nukes the slot (release_session) + frees transient pool slot.
+    assert "session-a" not in tree_cache.slots
     assert req.kv_committed_freed is True
     assert req.kv_overallocated_freed is True
     assert req.req_pool_idx is None
-    assert req.pop_overallocated_calls == 1
-    assert tree_cache.session_held_tokens() == 32
-    assert tree_cache.session_held_full_tokens() == 32
-    assert tree_cache.session_held_swa_tokens() == 32
-    assert tree_cache.session_held_req_count() == 1
-    assert req_to_token_pool.free_slots == [1]
-    assert len(allocator.freed) == 1
-    assert allocator.freed[0].tolist() == list(range(128, 151))
-
-    tree_cache.release_session("session-a")
-
     assert tree_cache.session_held_tokens() == 0
-    assert tree_cache.session_held_swa_tokens() == 0
     assert tree_cache.session_held_req_count() == 0
-    assert req_to_token_pool.free_slots == [1, 0]
-    assert len(allocator.freed) == 2
-    assert allocator.freed[1].tolist() == list(range(16, 48))
+    # Slot's KV freed by release_session + transient freed separately.
+    assert 0 in req_to_token_pool.free_slots  # slot's pool_idx
+    assert 1 in req_to_token_pool.free_slots  # transient pool_idx
 
 
 def test_first_request_abort_does_not_create_slot():
@@ -244,11 +230,10 @@ def test_first_request_abort_does_not_create_slot():
     assert req.kv_overallocated_freed is True
 
 
-def test_mid_processing_abort_preserves_session_slot():
-    """When a running streaming session req is aborted mid-processing
-    (e.g. client disconnect), the session slot should keep its pre-abort
-    state. prepare_for_extend may have inflated kv_committed_len before
-    forward actually committed, so save_from_req must NOT run."""
+def test_mid_processing_abort_wipes_session_slot():
+    """When a running streaming session req is aborted mid-processing,
+    ALL KV is wiped (release_session). Slot is deleted. Token IDs stay
+    in req_nodes for next turn's re-prefill."""
     page_size = 1
     req_to_token = torch.arange(256, dtype=torch.int32).reshape(2, 128)
     req_to_token_pool = SimpleNamespace(req_to_token=req_to_token, free_slots=[])
@@ -261,27 +246,23 @@ def test_mid_processing_abort_preserves_session_slot():
         req_pool_idx=0,
         kv_committed_len=50,
         kv_allocated_len=50,
-        last_node="lock-node",
-        cache_protected_len=16,
+        last_node=None,
+        cache_protected_len=0,
     )
 
     # Mid-processing abort: req has the SESSION slot's pool_idx (restore_to_req ran).
-    # req.kv_committed_len=60 may be inflated by prepare_for_extend.
     req = _FakeReq("session-a", req_pool_idx=0, committed=60, allocated=65)
     req.finished_reason = FINISH_ABORT("client disconnected")
 
     tree_cache.cache_finished_req(req)
 
-    slot = tree_cache.slots["session-a"]
-    # Slot preserved with PRE-ABORT state (save_from_req did NOT run).
-    assert slot.req_pool_idx == 0
-    assert slot.kv_committed_len == 50  # unchanged from before abort
-    assert slot.kv_allocated_len == 50  # unchanged
-    # Tokens allocated during the aborted turn [50, 65) are freed.
-    # Slot's original KV [0, 50) is kept intact.
+    # Slot wiped — deleted from slots dict.
+    assert "session-a" not in tree_cache.slots
+    # All KV freed: [0, 65) from release_session (slot extended to req's allocated).
     assert len(allocator.freed) == 1
-    assert allocator.freed[0].tolist() == list(range(50, 65))  # req_to_token[0, 50:65]
-    assert req_to_token_pool.free_slots == []
+    assert allocator.freed[0].tolist() == list(range(65))
+    # Pool slot returned.
+    assert req_to_token_pool.free_slots == [0]
     assert req.req_pool_idx is None
     # Bookkeeping flags set.
     assert req.kv_committed_freed is True
