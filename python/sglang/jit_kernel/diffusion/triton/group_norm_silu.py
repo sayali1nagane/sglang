@@ -8,9 +8,9 @@ import triton.language as tl  # type: ignore
 from sglang.srt.utils.custom_op import register_custom_op
 
 _SUPPORTED_DTYPES = {torch.float16, torch.bfloat16, torch.float32}
-_LARGE_GROUP_THRESHOLD = 1 << 20
-_BLOCK_SIZE = 2048
-_BLOCKS_PER_PROGRAM = 4
+_LARGE_GROUP_THRESHOLD = 1 << 18
+_BLOCK_SIZE = 4096
+_BLOCKS_PER_PROGRAM = 2
 _CHUNK_SIZE = _BLOCK_SIZE * _BLOCKS_PER_PROGRAM
 
 
