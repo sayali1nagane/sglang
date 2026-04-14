@@ -252,8 +252,14 @@ class SessionAwareCache(BasePrefixCache):
                     req.req_pool_idx = None
                 self._mark_kv_freed(req)
                 return
-            # else: mid-processing abort with session slot — fall through
-            # to save_from_req so the session preserves committed KV.
+            else:
+                # Mid-processing abort: req has the session slot's pool_idx.
+                # Don't save_from_req — prepare_for_extend may have inflated
+                # kv_committed_len before forward actually committed. Keep the
+                # slot's pre-abort state. _free_tail on the next turn handles
+                # any alloc-commit gap via slot.kv_allocated_len.
+                self._mark_kv_freed(req)
+                return
 
         if is_first:
             slot = SessionSlot()

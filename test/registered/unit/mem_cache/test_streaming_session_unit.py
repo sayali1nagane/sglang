@@ -240,8 +240,9 @@ def test_first_request_abort_does_not_create_slot():
 
 def test_mid_processing_abort_preserves_session_slot():
     """When a running streaming session req is aborted mid-processing
-    (e.g. client disconnect), the session slot should be preserved with
-    the committed KV, not destroyed."""
+    (e.g. client disconnect), the session slot should keep its pre-abort
+    state. prepare_for_extend may have inflated kv_committed_len before
+    forward actually committed, so save_from_req must NOT run."""
     page_size = 1
     req_to_token = torch.arange(256, dtype=torch.int32).reshape(2, 128)
     req_to_token_pool = SimpleNamespace(req_to_token=req_to_token, free_slots=[])
@@ -259,17 +260,18 @@ def test_mid_processing_abort_preserves_session_slot():
     )
 
     # Mid-processing abort: req has the SESSION slot's pool_idx (restore_to_req ran).
+    # req.kv_committed_len=60 may be inflated by prepare_for_extend.
     req = _FakeReq("session-a", req_pool_idx=0, committed=60, allocated=65)
     req.finished_reason = FINISH_ABORT("client disconnected")
 
     tree_cache.cache_finished_req(req)
 
     slot = tree_cache.slots["session-a"]
-    # Slot preserved with the req's committed state (save_from_req ran).
+    # Slot preserved with PRE-ABORT state (save_from_req did NOT run).
     assert slot.req_pool_idx == 0
-    assert slot.kv_committed_len == 60
-    assert slot.kv_allocated_len == 65
-    # No KV freed (session slot is kept intact).
+    assert slot.kv_committed_len == 50  # unchanged from before abort
+    assert slot.kv_allocated_len == 50  # unchanged
+    # No KV freed (session slot kept intact).
     assert len(allocator.freed) == 0
     assert req_to_token_pool.free_slots == []
     # Bookkeeping flags set.
