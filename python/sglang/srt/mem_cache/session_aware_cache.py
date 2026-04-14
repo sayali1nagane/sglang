@@ -203,9 +203,11 @@ class SessionAwareCache(BasePrefixCache):
             f"{slot.cache_protected_len=}"
         )
 
-        # alloc_for_extend will write new KV indices into
-        # req_to_token[prefix_len:seq_len], orphaning slot's tail indices
-        # in [prefix_len, slot.kv_allocated_len). Free the orphaned range.
+        # Free orphaned tail: alloc_for_extend will overwrite
+        # req_to_token[prefix_len:] with new indices. The range
+        # [prefix_len, kv_allocated_len) has stale indices from the
+        # previous turn's decode (e.g. alloc-commit gap on retract,
+        # or speculative draft tokens).
         if prefix_len < slot.kv_allocated_len:
             tail_indices = self.req_to_token_pool.req_to_token[
                 slot.req_pool_idx, prefix_len : slot.kv_allocated_len
