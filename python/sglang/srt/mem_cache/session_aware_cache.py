@@ -336,14 +336,7 @@ class SessionAwareCache(BasePrefixCache):
     # -- Session lifecycle --
 
     def release_session(self, session_id: str):
-        """Release all KV resources held by a streaming session.
-
-        `slot.last_node` + `slot.cache_protected_len` are trusted directly: radix
-        tree splits mutate TreeNode objects in place (see RadixCache._split_node),
-        so a saved TreeNode reference remains valid and the locked prefix length
-        is unchanged. No rematch needed -- and `match_prefix` here would cause
-        further splits that disturb accounting.
-        """
+        """Release all KV resources held by a streaming session."""
         slot = self.slots.pop(session_id, None)
         if slot is None:
             return
