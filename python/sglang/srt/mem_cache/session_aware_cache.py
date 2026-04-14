@@ -211,17 +211,7 @@ class SessionAwareCache(BasePrefixCache):
         # [prefix_len, kv_allocated_len) has stale indices from the
         # previous turn's decode (e.g. alloc-commit gap on retract,
         # or speculative draft tokens).
-        if prefix_len < slot.kv_allocated_len:
-            tail_indices = self.req_to_token_pool.req_to_token[
-                slot.req_pool_idx, prefix_len : slot.kv_allocated_len
-            ]
-            self.token_to_kv_pool_allocator.free(tail_indices)
-            slot.kv_allocated_len = prefix_len
-            slot.kv_committed_len = min(slot.kv_committed_len, prefix_len)
-            slot.swa_evicted_seqlen = min(slot.swa_evicted_seqlen, prefix_len)
-            req.kv_allocated_len = prefix_len
-            req.kv_committed_len = min(req.kv_committed_len, prefix_len)
-            req.swa_evicted_seqlen = min(req.swa_evicted_seqlen, prefix_len)
+        self._free_tail(slot, req, prefix_len)
 
         device_indices = self.req_to_token_pool.req_to_token[
             req.req_pool_idx, :prefix_len
@@ -266,29 +256,33 @@ class SessionAwareCache(BasePrefixCache):
             slot = SessionSlot()
             self.slots[session_id] = slot
 
-        # Trim speculative tail before transferring KV to the slot.
-        # Speculative decoding over-allocates draft token slots; free
-        # the range [committed, allocated) so the slot only inherits
-        # committed KV.
-        self._trim_speculative_tail(req)
-
+        # No spec tail trim here — match_prefix's orphan tail free handles
+        # all cases (spec tail, alloc-commit gap, logit reserve) at the
+        # start of the next turn.
         slot.save_from_req(req, is_first=is_first)
 
         # Mark bookkeeping flags so the busy check doesn't count this
         # finished request as uncached KV.
         self._mark_kv_freed(req)
 
-    def _trim_speculative_tail(self, req: Req):
-        """Free over-allocated KV slots from speculative decoding."""
-        start_p, end_p = req.pop_overallocated_kv_cache()
-        if self.page_size > 1:
-            start_p = ceil_align(start_p, self.page_size)
-        if start_p < end_p:
-            indices = self.req_to_token_pool.req_to_token[req.req_pool_idx][
-                start_p:end_p
-            ]
-            self.token_to_kv_pool_allocator.free(indices)
-        req.kv_allocated_len = req.kv_committed_len
+    def _free_tail(self, slot: SessionSlot, req: Req, prefix_len: int):
+        """Free orphaned KV indices in [prefix_len, kv_allocated_len).
+
+        Covers spec draft tokens, decode alloc-commit gap, and the 1-token
+        logit-reserve offset on retract retry. No-op when no tail exists.
+        """
+        if prefix_len >= slot.kv_allocated_len:
+            return
+        tail_indices = self.req_to_token_pool.req_to_token[
+            slot.req_pool_idx, prefix_len : slot.kv_allocated_len
+        ]
+        self.token_to_kv_pool_allocator.free(tail_indices)
+        slot.kv_allocated_len = prefix_len
+        slot.kv_committed_len = min(slot.kv_committed_len, prefix_len)
+        slot.swa_evicted_seqlen = min(slot.swa_evicted_seqlen, prefix_len)
+        req.kv_allocated_len = prefix_len
+        req.kv_committed_len = min(req.kv_committed_len, prefix_len)
+        req.swa_evicted_seqlen = min(req.swa_evicted_seqlen, prefix_len)
 
     @staticmethod
     def _mark_kv_freed(req: Req):

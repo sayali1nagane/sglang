@@ -83,7 +83,10 @@ class _FakeReq:
         return self.kv_committed_len, self.kv_allocated_len
 
 
-def test_streaming_release_kv_cache_trims_overallocated_tail(monkeypatch):
+def test_streaming_release_kv_cache_defers_tail_free(monkeypatch):
+    """Spec tail is NOT trimmed in cache_finished_req; it is deferred to
+    match_prefix's orphan tail free on the next turn. cache_finished_req
+    only sets bookkeeping flags and saves the slot as-is."""
     page_size = 16
     req_to_token = torch.arange(128, dtype=torch.int32).reshape(1, 128)
     req_to_token_pool = SimpleNamespace(req_to_token=req_to_token, free_slots=[])
@@ -101,14 +104,13 @@ def test_streaming_release_kv_cache_trims_overallocated_tail(monkeypatch):
     release_kv_cache(req, tree_cache)
 
     slot = tree_cache.slots["session-a"]
-    assert req.pop_overallocated_calls == 1
     assert req.kv_committed_freed is True
     assert req.kv_overallocated_freed is True
     assert req.req_pool_idx is None
+    # Slot keeps the full allocation — tail free is deferred to match_prefix.
     assert slot.kv_committed_len == 17
-    assert slot.kv_allocated_len == 17
-    assert len(allocator.freed) == 1
-    assert allocator.freed[0].tolist() == list(range(32, 40))
+    assert slot.kv_allocated_len == 40
+    assert len(allocator.freed) == 0
 
 
 def test_match_prefix_abort_does_not_restore_live_session_slot():
