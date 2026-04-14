@@ -217,15 +217,17 @@ class SessionAwareCache(BasePrefixCache):
                 slot.req_pool_idx, free_start : slot.kv_allocated_len
             ]
             self.token_to_kv_pool_allocator.free(tail_indices)
-            slot.kv_allocated_len = prefix_len
-            slot.kv_committed_len = min(slot.kv_committed_len, prefix_len)
-            # SWA-only: keep swa_evicted_seqlen <= kv_allocated_len so the busy
-            # mem check's uncached = allocated - max(protected, evicted) stays
-            # non-negative when the slot shrinks below the past SWA watermark.
-            slot.swa_evicted_seqlen = min(slot.swa_evicted_seqlen, prefix_len)
-            req.kv_allocated_len = prefix_len
-            req.kv_committed_len = min(req.kv_committed_len, prefix_len)
-            req.swa_evicted_seqlen = min(req.swa_evicted_seqlen, prefix_len)
+
+        # Always clamp slot/req lengths to prefix_len, even when no tail was
+        # freed (e.g. free_start >= kv_allocated_len due to page ceil-align).
+        # Without this, the slot keeps an inflated kv_allocated_len and
+        # accounting over-counts by the partial-page overhead.
+        slot.kv_allocated_len = prefix_len
+        slot.kv_committed_len = min(slot.kv_committed_len, prefix_len)
+        slot.swa_evicted_seqlen = min(slot.swa_evicted_seqlen, prefix_len)
+        req.kv_allocated_len = prefix_len
+        req.kv_committed_len = min(req.kv_committed_len, prefix_len)
+        req.swa_evicted_seqlen = min(req.swa_evicted_seqlen, prefix_len)
 
         device_indices = self.req_to_token_pool.req_to_token[
             req.req_pool_idx, :prefix_len
