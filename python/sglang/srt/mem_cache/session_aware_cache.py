@@ -200,10 +200,6 @@ class SessionAwareCache(BasePrefixCache):
         # logits to sample the next token. We use token_ids length directly
         # (no additional -1) — the reservation has already been applied.
         prefix_len = min(req.kv_committed_len, len(params.key.token_ids))
-        # Floor-align to page_size. cache_protected_len must be page-aligned
-        # (tree node boundary); if prefix_len isn't, accounting asserts fire.
-        if self.page_size > 1:
-            prefix_len = (prefix_len // self.page_size) * self.page_size
 
         # alloc_for_extend will write new KV indices into req_to_token[prefix_len:seq_len],
         # orphaning slot's tail indices in [prefix_len, slot.kv_allocated_len).
@@ -211,7 +207,12 @@ class SessionAwareCache(BasePrefixCache):
         # tokens are owned by the tree (locked), and freeing them would corrupt
         # the tree's KV. The shrink path in cache_finished_req handles the case
         # where the request is genuinely shorter than the protected prefix.
+        # Ceil-align free_start so partial pages are not freed (allocator is
+        # page-granular); prefix_len itself stays unaligned to preserve full
+        # token inheritance.
         free_start = max(prefix_len, slot.cache_protected_len)
+        if self.page_size > 1:
+            free_start = ceil_align(free_start, self.page_size)
         if free_start < slot.kv_allocated_len:
             tail_indices = self.req_to_token_pool.req_to_token[
                 slot.req_pool_idx, free_start : slot.kv_allocated_len
@@ -243,11 +244,16 @@ class SessionAwareCache(BasePrefixCache):
         # would break the req.kv_allocated_len >= req.cache_protected_len
         # invariant in downstream accounting. The slot's underlying lock
         # length is preserved via slot.cache_protected_len for release.
+        # Floor-align to page_size: busy check asserts cache_protected_len
+        # is page-aligned (tree node boundary).
+        result_protected = min(slot.cache_protected_len, prefix_len)
+        if self.page_size > 1:
+            result_protected = (result_protected // self.page_size) * self.page_size
         return MatchResult(
             device_indices=device_indices,
             last_device_node=slot.virtual_node,
             last_host_node=slot.virtual_node,
-            cache_protected_len=min(slot.cache_protected_len, prefix_len),
+            cache_protected_len=result_protected,
         )
 
     def cache_finished_req(self, req: Req, is_insert: bool = True, **kwargs):
