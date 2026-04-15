@@ -193,13 +193,9 @@ class SessionAwareCache(BasePrefixCache):
 
         slot.restore_to_req(req)
 
-        # init_next_round_input passes token_ids = fill_ids[:input_len-1],
-        # reserving 1 token for prefill so the forward pass can produce
-        # logits to sample the next token. We use token_ids length directly
-        # (no additional -1) — the reservation has already been applied.
-        # min is needed: on retract retry, kv_committed_len can exceed
-        # len(token_ids) by 1 due to the logit-reservation truncation
-        # (fill_ids[:input_len-1]).
+        # token_ids = fill_ids[:input_len-1] (1-token logit reserve already
+        # applied). min handles retract retry where committed_len can
+        # exceed len(token_ids) by 1.
         prefix_len = min(req.kv_committed_len, len(params.key.token_ids))
 
         # Streaming sessions are append-only (session_controller rollback
