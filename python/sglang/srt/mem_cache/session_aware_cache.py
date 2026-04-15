@@ -272,11 +272,13 @@ class SessionAwareCache(BasePrefixCache):
 
     def _free_tail(self, slot: SessionSlot, req: Req, prefix_len: int):
         """Free KV in [prefix_len, kv_allocated_len) before the next
-        alloc_for_extend overwrites it (spec tail, alloc-commit gap, or
-        logit-reserve offset). Free start is ceil-aligned to page_size:
-        PagedTokenToKVPoolAllocator frees by whole pages, so partial-page
-        free would corrupt pages still holding committed tokens; the gap
-        stays attached until release_session.
+        alloc_for_extend overwrites it. The gap appears when spec
+        decoding pushes allocated above committed, or when retract
+        retry's logit-reserve pulls prefix_len below committed.
+        Free start is ceil-aligned to page_size: PagedTokenToKVPoolAllocator
+        frees by whole pages, so partial-page free would corrupt pages
+        still holding committed tokens; the gap stays attached until
+        release_session.
         """
         if prefix_len >= slot.kv_allocated_len:
             return
