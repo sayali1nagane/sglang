@@ -235,3 +235,44 @@ def test_nth_mid_abort_nukes_session_slot():
 # Shrink tests removed: streaming sessions are append-only after the
 # rollback fix in session_controller (rollback_aborted_req).  The shrink
 # code path in cache_finished_req no longer exists.
+
+
+def test_trim_overshoot_caps_swa_evicted_seqlen():
+    """`_trim_overshoot` must mirror `_free_tail`'s SWA bookkeeping cap.
+
+    Spec v2 may overshoot during a finishing round, and SWA can advance
+    `swa_evicted_seqlen` past the post-trim boundary while doing so.
+    Without the cap, save_from_req propagates the stale high-water mark
+    into the slot, and next turn's restore_to_req sets req.swa_evicted_seqlen
+    > origin+finished_len — an inconsistency relative to req_to_token /
+    kv_committed_len that other SWA bookkeeping assumes never happens
+    (the invariant `_free_tail` already enforces on the match_prefix path).
+    """
+    page_size = 1
+    req_to_token = torch.arange(128, dtype=torch.int32).reshape(1, 128)
+    req_to_token_pool = SimpleNamespace(req_to_token=req_to_token, free_slots=[])
+    allocator = _FakeAllocator()
+    tree_cache = SessionAwareCache(
+        _FakeInnerCache(req_to_token_pool, allocator, page_size)
+    )
+
+    # Overshoot scenario: origin=26, finished_len=12 -> target=38.
+    # committed=40 (overshoot 2), allocated=44, swa_evicted=42 (> target),
+    # output_ids extended to 14 by the overshoot round.
+    req = _FakeReq("session-a", req_pool_idx=0, committed=40, allocated=44)
+    req.origin_input_ids = list(range(26))
+    req.output_ids = list(range(14))
+    req.swa_evicted_seqlen = 42
+
+    tree_cache._trim_overshoot(req, finished_len=12)
+
+    target = 38
+    assert req.kv_committed_len == target
+    assert req.kv_allocated_len == target
+    assert (
+        req.swa_evicted_seqlen == target
+    ), f"swa_evicted_seqlen must be capped at {target}, got {req.swa_evicted_seqlen}"
+    assert len(req.output_ids) == 12
+    # Tail [38, 44) freed by _free_kv_aligned.
+    assert len(allocator.freed) == 1
+    assert allocator.freed[0].tolist() == list(range(38, 44))
